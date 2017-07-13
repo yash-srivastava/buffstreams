@@ -2,6 +2,8 @@ package buffstreams
 
 import (
 	"errors"
+	"fmt"
+	cmap "github.com/orcaman/concurrent-map"
 	"sync"
 )
 
@@ -36,6 +38,11 @@ func NewManager() *Manager {
 	return bm
 }
 
+var (
+	TcpClients cmap.ConcurrentMap
+	TcpSguMap  cmap.ConcurrentMap
+)
+
 // StartListening is an asyncrhonous, non-blocking method. It begins listening on the given
 // port, and fire off a goroutine for every client connection it receives. That goroutine will
 // read the fixed header, then the message payload, and then invoke the povided ListenCallbacl.
@@ -49,7 +56,12 @@ func (bm *Manager) StartListening(cfg TCPListenerConfig) error {
 	//   MaxMessageSize: 4096,
 	//   EnableLogging: False,
 	// }
-
+	if TcpClients == nil {
+		TcpClients = cmap.New()
+	}
+	if TcpSguMap == nil {
+		TcpSguMap = cmap.New()
+	}
 	bm.listenerLock.Lock()
 	defer bm.listenerLock.Unlock()
 	if _, ok := bm.listeningSockets[cfg.Address]; ok == true {
@@ -87,16 +99,20 @@ func (bm *Manager) CloseListener(address string) error {
 // written, you should always check to make sure this number matches the bytes you
 // attempted to write, due to very exceptional cases.
 func (bm *Manager) Dial(cfg *TCPConnConfig) error {
+	fmt.Println("1")
 	bm.dialerLock.Lock()
+	fmt.Println("2")
 	defer bm.dialerLock.Unlock()
+	fmt.Println("3")
 	if _, ok := bm.dialedConnections[cfg.Address]; ok {
 		return ErrAlreadyOpened
 	}
-
+	fmt.Println("4")
 	btw, err := DialTCP(cfg)
 	if err != nil {
 		return err
 	}
+	fmt.Println("5")
 	bm.dialedConnections[cfg.Address] = btw
 	return nil
 }

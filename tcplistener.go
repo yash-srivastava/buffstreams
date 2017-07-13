@@ -1,17 +1,23 @@
 package buffstreams
 
 import (
+	"github.com/revel/revel"
 	"log"
 	"net"
 	"sync"
 )
+
+type Client struct {
+	Address string
+	Data    []byte
+}
 
 // ListenCallback is a function type that calling code will need to implement in order
 // to receive arrays of bytes from the socket. Each slice of bytes will be stripped of the
 // size header, meaning you can directly serialize the raw slice. You would then perform your
 // custom logic for interpretting the message, before returning. You can optionally
 // return an error, which in turn will be logged if EnableLogging is set to true.
-type ListenCallback func([]byte) error
+type ListenCallback func(Client) error
 
 // TCPListener represents the abstraction over a raw TCP socket for reading streaming
 // protocolbuffer data without having to write a ton of boilerplate
@@ -166,17 +172,43 @@ func (t *TCPListener) readLoop(conn *TCPConn) {
 	// we want to kill the connection, exit the goroutine, and let the client handle re-connecting if need be.
 	// Handle getting the data header
 	for {
-		msgLen, err := conn.Read(dataBuffer)
+		buffer := make([]byte, 1)
+		for {
+
+			_, errr := conn.socket.Read(buffer)
+
+			if errr != nil {
+				addr := conn.socket.RemoteAddr().String()
+				TcpSguMap.Set(addr, nil)
+				conn.Close()
+				revel.WARN.Println(errr.Error())
+				return
+			}
+			if buffer[0] == byte(0x7E) {
+				revel.INFO.Println("Sync Found :)")
+				break
+			}
+
+		}
+		msgLen, err := conn.socket.Read(dataBuffer)
+		dataBuffer = append(buffer, dataBuffer...)
+		msgLen += 1
 		if err != nil {
 			if t.enableLogging {
 				log.Printf("Address %s: Failure to read from connection. Underlying error: %s", conn.address, err)
 			}
+			addr := conn.socket.RemoteAddr().String()
+			TcpSguMap.Set(addr, nil)
 			conn.Close()
 			return
 		}
 		// We take action on the actual message data - but only up to the amount of bytes read,
 		// since we re-use the cache
-		if err = t.callback(dataBuffer[:msgLen]); err != nil && t.enableLogging {
+		client := Client{}
+		client.Address = conn.socket.RemoteAddr().String()
+		client.Data = dataBuffer[:msgLen]
+		TcpClients.Set(client.Address, conn)
+		if err = t.callback(client); err != nil && t.enableLogging {
 			log.Printf("Error in Callback: %s", err.Error())
 			// TODO if it's a protobuffs error, it means we likely had an issue and can't
 			// deserialize data? Should we kill the connection and have the client start over?
